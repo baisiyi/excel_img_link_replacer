@@ -56,14 +56,15 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
       - name: Build
+        shell: cmd
         run: |
           mkdir dist
-          echo "GOOS=windows GOARCH=amd64 CGO_ENABLED=1"
+          echo GOOS=windows GOARCH=amd64 CGO_ENABLED=1
           set CGO_ENABLED=1
           set GOOS=windows
           set GOARCH=amd64
-          go build -ldflags="-s -w" -o dist/${{ env.PROJECT_NAME }}-windows-amd64.exe ./cmd/desktop
-          echo "dist after windows build:"
+          go build -ldflags="-s -w" -o dist\${{ env.PROJECT_NAME }}-windows-amd64.exe ./cmd/desktop
+          echo dist after windows build:
           dir dist
           if not exist dist\${{ env.PROJECT_NAME }}-windows-amd64.exe exit /b 1
       - name: Upload artifact
