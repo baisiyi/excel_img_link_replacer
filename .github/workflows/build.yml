@@ -42,7 +42,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-amd64
-          path: dist/${PROJECT_NAME}-linux-amd64
+          path: dist/${{ env.PROJECT_NAME }}-linux-amd64
           if-no-files-found: error
 
   build-windows:
@@ -94,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: darwin-amd64
-          path: dist/${PROJECT_NAME}-darwin-amd64
+          path: dist/${{ env.PROJECT_NAME }}-darwin-amd64
           if-no-files-found: error
 
   build-macos-arm:
@@ -118,7 +118,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: darwin-arm64
-          path: dist/${PROJECT_NAME}-darwin-arm64
+          path: dist/${{ env.PROJECT_NAME }}-darwin-arm64
           if-no-files-found: error
 
   package:
