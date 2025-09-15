@@ -34,12 +34,16 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
+          echo "GOOS=linux GOARCH=amd64 CGO_ENABLED=1"
           CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/${PROJECT_NAME}-linux-amd64 ./cmd/desktop
+          echo "dist after linux build:" && ls -la dist/ || true
+          test -f dist/${PROJECT_NAME}-linux-amd64
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-amd64
           path: dist/${PROJECT_NAME}-linux-amd64
+          if-no-files-found: error
 
   build-windows:
     name: Build Windows (amd64)
@@ -54,15 +58,20 @@ jobs:
       - name: Build
         run: |
           mkdir dist
+          echo "GOOS=windows GOARCH=amd64 CGO_ENABLED=1"
           set CGO_ENABLED=1
           set GOOS=windows
           set GOARCH=amd64
           go build -ldflags="-s -w" -o dist/${{ env.PROJECT_NAME }}-windows-amd64.exe ./cmd/desktop
+          echo "dist after windows build:"
+          dir dist
+          if not exist dist\${{ env.PROJECT_NAME }}-windows-amd64.exe exit /b 1
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-amd64
           path: dist/${{ env.PROJECT_NAME }}-windows-amd64.exe
+          if-no-files-found: error
 
   build-macos-intel:
     name: Build macOS (x86_64)
@@ -77,12 +86,16 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
+          echo "GOOS=darwin GOARCH=amd64 CGO_ENABLED=1"
           CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/${PROJECT_NAME}-darwin-amd64 ./cmd/desktop
+          echo "dist after macOS amd64 build:" && ls -la dist/ || true
+          test -f dist/${PROJECT_NAME}-darwin-amd64
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: darwin-amd64
           path: dist/${PROJECT_NAME}-darwin-amd64
+          if-no-files-found: error
 
   build-macos-arm:
     name: Build macOS (arm64)
@@ -97,12 +110,16 @@ jobs:
       - name: Build
         run: |
           mkdir -p dist
+          echo "GOOS=darwin GOARCH=arm64 CGO_ENABLED=1"
           CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/${PROJECT_NAME}-darwin-arm64 ./cmd/desktop
+          echo "dist after macOS arm64 build:" && ls -la dist/ || true
+          test -f dist/${PROJECT_NAME}-darwin-arm64
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: darwin-arm64
           path: dist/${PROJECT_NAME}-darwin-arm64
+          if-no-files-found: error
 
   package:
     name: Create Distribution Packages
@@ -118,13 +135,21 @@ jobs:
       - name: Create distribution packages
         run: |
           sudo apt-get update && sudo apt-get install -y zip
-          ls -la dist/
+          echo "Dist contents:" && ls -la dist/
           mkdir -p packages
-          zip packages/${PROJECT_NAME}-linux-amd64.zip dist/${PROJECT_NAME}-linux-amd64
-          zip packages/${PROJECT_NAME}-windows-amd64.zip dist/${PROJECT_NAME}-windows-amd64.exe
-          zip packages/${PROJECT_NAME}-darwin-amd64.zip dist/${PROJECT_NAME}-darwin-amd64
-          zip packages/${PROJECT_NAME}-darwin-arm64.zip dist/${PROJECT_NAME}-darwin-arm64
-          zip packages/${PROJECT_NAME}-all-platforms.zip dist/*
+          [ -f dist/${PROJECT_NAME}-linux-amd64 ] && zip packages/${PROJECT_NAME}-linux-amd64.zip dist/${PROJECT_NAME}-linux-amd64 || echo "skip linux-amd64 (missing)"
+          [ -f dist/${PROJECT_NAME}-windows-amd64.exe ] && zip packages/${PROJECT_NAME}-windows-amd64.zip dist/${PROJECT_NAME}-windows-amd64.exe || echo "skip windows-amd64 (missing)"
+          [ -f dist/${PROJECT_NAME}-darwin-amd64 ] && zip packages/${PROJECT_NAME}-darwin-amd64.zip dist/${PROJECT_NAME}-darwin-amd64 || echo "skip darwin-amd64 (missing)"
+          [ -f dist/${PROJECT_NAME}-darwin-arm64 ] && zip packages/${PROJECT_NAME}-darwin-arm64.zip dist/${PROJECT_NAME}-darwin-arm64 || echo "skip darwin-arm64 (missing)"
+          FILES=""
+          for f in dist/${PROJECT_NAME}-linux-amd64 dist/${PROJECT_NAME}-windows-amd64.exe dist/${PROJECT_NAME}-darwin-amd64 dist/${PROJECT_NAME}-darwin-arm64; do
+            [ -f "$f" ] && FILES="$FILES $f"
+          done
+          if [ -n "$FILES" ]; then
+            zip packages/${PROJECT_NAME}-all-platforms.zip $FILES
+          else
+            echo "no files to bundle into all-platforms zip"
+          fi
           ls -la packages/
       - name: Upload distribution packages
         uses: actions/upload-artifact@v4
