@@ -119,10 +119,6 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y zip
           ls -la dist/
-          test -f dist/${PROJECT_NAME}-linux-amd64
-          test -f dist/${PROJECT_NAME}-windows-amd64.exe
-          test -f dist/${PROJECT_NAME}-darwin-amd64
-          test -f dist/${PROJECT_NAME}-darwin-arm64
           mkdir -p packages
           zip packages/${PROJECT_NAME}-linux-amd64.zip dist/${PROJECT_NAME}-linux-amd64
           zip packages/${PROJECT_NAME}-windows-amd64.zip dist/${PROJECT_NAME}-windows-amd64.exe
