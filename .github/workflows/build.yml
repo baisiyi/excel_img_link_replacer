@@ -8,6 +8,7 @@ on:
     branches: [ main ]
 
 env:
+  # 基于 2025 年 11 月，Go 1.25 是当前稳定版本
   GO_VERSION: '1.25'
   # 应用的唯一标识符
   APP_ID: 'com.bestfulfill.excelimgreplacer'
@@ -33,20 +34,19 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true # 启用依赖缓存
+          cache: true
 
       - name: Install Linux build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
 
+      # 修正：使用日志提示的正确路径安装最新的 Fyne 工具
       - name: Install Fyne CLI tool
-        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+        run: go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build and package Linux app
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Warning: Icon not found. Using default." && touch ${{ env.ICON_PATH }}; fi
-          # Fyne v2 在 Linux 上会生成 .tar.xz 包
-          fyne package -os linux -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
-          # 重命名以符合我们的发布规范
+          fyne package -os linux -arch amd64 -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.tar.xz ./${{ env.PROJECT_NAME }}-linux-amd64.tar.xz
 
       - name: Upload artifact
@@ -71,15 +71,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # 修正：使用日志提示的正确路径安装最新的 Fyne 工具
       - name: Install Fyne CLI tool
-        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+        run: go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build and package Windows app
         shell: powershell
         run: |
           if (!(Test-Path "${{ env.ICON_PATH }}")) { Write-Host "Warning: Icon not found. Using default." ; New-Item -ItemType File -Path "${{ env.ICON_PATH }}" }
-          # Fyne v2 在 Windows 上会自动生成包含 .exe 的 .zip 包
-          fyne package -os windows -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          fyne package -os windows -arch amd64 -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
           Rename-Item -Path "${{ env.PROJECT_NAME }}.zip" -NewName "${{ env.PROJECT_NAME }}-windows-amd64.zip"
 
       - name: Upload artifact
@@ -113,13 +113,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      # 修正：使用日志提示的正确路径安装最新的 Fyne 工具
       - name: Install Fyne CLI tool
-        run: go install fyne.io/fyne/v2/cmd/fyne@latest
+        run: go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build and package macOS app
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Warning: Icon not found. Using default." && touch ${{ env.ICON_PATH }}; fi
-          # Fyne v2 在 macOS 上会自动生成包含 .app 的 .zip 包
           fyne package -os darwin -arch ${{ matrix.arch }} -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.zip ./${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip
 
@@ -136,17 +136,15 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [build-linux, build-windows, build-macos]
-    # 仅在创建 v* 开头的 tag 时触发
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
-      # 必须授予此权限，以便 action-gh-release 能够创建 Release
       contents: write
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true # 将所有 artifact 合并到一个目录
+          merge-multiple: true
 
       - name: Display structure of downloaded files
         run: ls -R artifacts
@@ -154,7 +152,5 @@ jobs:
       - name: Create Release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          # 上传 artifacts 目录下的所有文件
           files: artifacts/*
-          # 自动根据 commit log 生成 Release Notes
           generate_release_notes: true
