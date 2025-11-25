@@ -8,11 +8,15 @@ on:
     branches: [ main ]
 
 env:
-  # Using a stable, recent Go version
+  # 使用一个稳定且较新的 Go 版本
   GO_VERSION: '1.25'
+  # 应用的唯一标识符
   APP_ID: 'com.bestfulfill.excelimgreplacer'
+  # 生成的可执行文件/包的名称
   PROJECT_NAME: 'ExcelImgReplacer'
+  # 图标文件路径 (请确保项目根目录下有此文件)
   ICON_PATH: 'icon.png'
+  # 主程序包的路径
   CMD_PATH: './cmd/desktop'
 
 jobs:
@@ -32,14 +36,14 @@ jobs:
       - name: Install Linux build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
 
-      - name: Install the correct Fyne CLI tool
+      - name: Install the Fyne CLI tool
         run: go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build and package Linux app
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then touch ${{ env.ICON_PATH }}; fi
-          # CORRECTED: OS and Architecture are now a single flag
-          fyne package -os linux/amd64 -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          # 修正所有参数以匹配官方文档
+          fyne package -os linux/amd64 --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.tar.xz ./${{ env.PROJECT_NAME }}-linux-amd64.tar.xz
 
       - uses: actions/upload-artifact@v4
@@ -60,15 +64,15 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install the correct Fyne CLI tool
+      - name: Install the Fyne CLI tool
         run: go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build and package Windows app
         shell: powershell
         run: |
           if (!(Test-Path "${{ env.ICON_PATH }}")) { New-Item -ItemType File -Path "${{ env.ICON_PATH }}" }
-          # CORRECTED: OS and Architecture are now a single flag
-          fyne package -os windows/amd64 -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          # 修正所有参数以匹配官方文档
+          fyne package -os windows/amd64 --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
           Rename-Item -Path "${{ env.PROJECT_NAME }}.zip" -NewName "${{ env.PROJECT_NAME }}-windows-amd64.zip"
 
       - uses: actions/upload-artifact@v4
@@ -98,14 +102,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Install the correct Fyne CLI tool
+      - name: Install the Fyne CLI tool
         run: go install fyne.io/tools/cmd/fyne@latest
 
       - name: Build and package macOS app
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then touch ${{ env.ICON_PATH }}; fi
-          # CORRECTED: OS and Architecture are now a single flag
-          fyne package -os darwin/${{ matrix.arch }} -appID ${{ env.APP_ID }} -icon ${{ env.ICON_PATH }} -name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          # 修正所有参数以匹配官方文档
+          fyne package -os darwin/${{ matrix.arch }} --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.zip ./${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip
 
       - uses: actions/upload-artifact@v4
