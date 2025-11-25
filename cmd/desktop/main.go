@@ -12,7 +12,7 @@ import (
 func main() {
 	a := app.NewWithID("pic_tool.desktop")
 	a.Settings().SetTheme(theme.LightTheme())
-	w := a.NewWindow("Excel 图片替换工具")
+	w := a.NewWindow("Excel图片链接替换工具")
 	w.Resize(ui.DefaultWindowSize())
 
 	content := ui.BuildUI(a, w)

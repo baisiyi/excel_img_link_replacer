@@ -10,7 +10,7 @@ on:
 env:
   GO_VERSION: '1.25'
   APP_ID: 'com.bestfulfill.excelimgreplacer'
-  PROJECT_NAME: 'ExcelImgReplacer'
+  PROJECT_NAME: 'Excel图片链接替换工具'
   ICON_PATH: 'icon.png'
   CMD_PATH: './cmd/desktop'
 
@@ -60,34 +60,111 @@ jobs:
       - name: Build and package Windows app
         shell: powershell
         run: |
+          # 设置错误处理
+          $ErrorActionPreference = "Stop"
+          
+          # 验证图标文件
           if (!(Test-Path "${{ env.ICON_PATH }}")) {
-            Write-Error "Icon file not found"
+            Write-Error "Icon file not found: ${{ env.ICON_PATH }}"
+            Get-ChildItem | Format-Table Name, Length
             exit 1
           }
-          # 简化：不指定 -os，让工具在原生环境 (windows/amd64) 中自动构建
-          $ICON_ABS_PATH = (Resolve-Path "${{ env.ICON_PATH }}").Path
-          fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
-          # 检查生成的文件
-          Write-Host "Checking for output files..."
-          Get-ChildItem -Filter "${{ env.PROJECT_NAME }}*" | ForEach-Object { Write-Host "Found: $($_.Name) ($($_.Length) bytes)" }
           
-          # Windows 上 fyne package 可能生成 .exe 或 .zip
+          # 获取绝对路径
+          $ICON_ABS_PATH = (Resolve-Path "${{ env.ICON_PATH }}").Path
+          Write-Host "Icon path: $ICON_ABS_PATH"
+          Write-Host "Source path: ${{ env.CMD_PATH }}"
+          Write-Host "Current directory: $(Get-Location)"
+          
+          # 显示当前目录内容
+          Write-Host "`nBefore fyne package - Current directory:"
+          Get-ChildItem | Format-Table Name, Length, LastWriteTime
+          
+          # 执行 fyne package 并捕获输出
+          Write-Host "`nRunning fyne package..."
+          $fyneOutput = fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }} 2>&1
+          $fyneExitCode = $LASTEXITCODE
+          
+          Write-Host "Fyne package output:"
+          Write-Host $fyneOutput
+          Write-Host "Exit code: $fyneExitCode"
+          
+          if ($fyneExitCode -ne 0) {
+            Write-Error "fyne package failed with exit code $fyneExitCode"
+            exit 1
+          }
+          
+          # 检查多个可能的位置
+          Write-Host "`nAfter fyne package - Checking for output files..."
+          
+          # 检查当前目录
+          $currentDirFiles = Get-ChildItem -Filter "${{ env.PROJECT_NAME }}*" -ErrorAction SilentlyContinue
+          Write-Host "Files in current directory matching '${{ env.PROJECT_NAME }}*':"
+          $currentDirFiles | ForEach-Object { Write-Host "  - $($_.Name) ($($_.Length) bytes)" }
+          
+          # 检查源代码目录
+          $srcDir = "${{ env.CMD_PATH }}"
+          if (Test-Path $srcDir) {
+            $srcDirFiles = Get-ChildItem -Path $srcDir -Filter "${{ env.PROJECT_NAME }}*" -ErrorAction SilentlyContinue
+            Write-Host "Files in $srcDir matching '${{ env.PROJECT_NAME }}*':"
+            $srcDirFiles | ForEach-Object { Write-Host "  - $($_.FullName) ($($_.Length) bytes)" }
+          }
+          
+          # 检查所有 .exe 和 .zip 文件
+          Write-Host "`nAll .exe and .zip files in current directory:"
+          Get-ChildItem -Filter "*.exe" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  EXE: $($_.Name)" }
+          Get-ChildItem -Filter "*.zip" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  ZIP: $($_.Name)" }
+          
+          # 尝试找到输出文件
           $exeFile = "${{ env.PROJECT_NAME }}.exe"
           $zipFile = "${{ env.PROJECT_NAME }}.zip"
           $outputFile = "${{ env.PROJECT_NAME }}-windows-amd64.zip"
+          $foundFile = $null
           
+          # 先检查当前目录
           if (Test-Path $zipFile) {
-            # 如果生成了 .zip，直接重命名
-            Rename-Item -Path $zipFile -NewName $outputFile
-            Write-Host "Renamed $zipFile to $outputFile"
+            $foundFile = $zipFile
+            Write-Host "`nFound zip file: $zipFile"
           } elseif (Test-Path $exeFile) {
-            # 如果生成了 .exe，打包成 zip
-            Compress-Archive -Path $exeFile -DestinationPath $outputFile -Force
-            Write-Host "Compressed $exeFile to $outputFile"
+            $foundFile = $exeFile
+            Write-Host "`nFound exe file: $exeFile"
           } else {
+            # 检查源代码目录
+            $srcExe = Join-Path $srcDir $exeFile
+            $srcZip = Join-Path $srcDir $zipFile
+            if (Test-Path $srcExe) {
+              $foundFile = $srcExe
+              Write-Host "`nFound exe file in source dir: $srcExe"
+            } elseif (Test-Path $srcZip) {
+              $foundFile = $srcZip
+              Write-Host "`nFound zip file in source dir: $srcZip"
+            }
+          }
+          
+          if ($null -eq $foundFile) {
             Write-Error "Error: No output file found. Expected $zipFile or $exeFile"
-            Write-Host "Current directory contents:"
-            Get-ChildItem | Format-Table Name, Length, LastWriteTime
+            Write-Host "`nFull directory listing:"
+            Get-ChildItem -Recurse -Filter "${{ env.PROJECT_NAME }}*" -ErrorAction SilentlyContinue | Format-Table FullName, Length, LastWriteTime
+            exit 1
+          }
+          
+          # 处理找到的文件
+          if ($foundFile.EndsWith('.zip')) {
+            # 如果是 zip，直接复制并重命名
+            Copy-Item -Path $foundFile -Destination $outputFile -Force
+            Write-Host "Copied $foundFile to $outputFile"
+          } elseif ($foundFile.EndsWith('.exe')) {
+            # 如果是 exe，压缩成 zip
+            Compress-Archive -Path $foundFile -DestinationPath $outputFile -Force
+            Write-Host "Compressed $foundFile to $outputFile"
+          }
+          
+          # 验证输出文件
+          if (Test-Path $outputFile) {
+            $outputInfo = Get-Item $outputFile
+            Write-Host "`nSuccess! Output file: $outputFile ($($outputInfo.Length) bytes)"
+          } else {
+            Write-Error "Failed to create output file: $outputFile"
             exit 1
           }
       - uses: actions/upload-artifact@v4
