@@ -67,7 +67,29 @@ jobs:
           # 简化：不指定 -os，让工具在原生环境 (windows/amd64) 中自动构建
           $ICON_ABS_PATH = (Resolve-Path "${{ env.ICON_PATH }}").Path
           fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
-          Rename-Item -Path "${{ env.PROJECT_NAME }}.zip" -NewName "${{ env.PROJECT_NAME }}-windows-amd64.zip"
+          # 检查生成的文件
+          Write-Host "Checking for output files..."
+          Get-ChildItem -Filter "${{ env.PROJECT_NAME }}*" | ForEach-Object { Write-Host "Found: $($_.Name) ($($_.Length) bytes)" }
+          
+          # Windows 上 fyne package 可能生成 .exe 或 .zip
+          $exeFile = "${{ env.PROJECT_NAME }}.exe"
+          $zipFile = "${{ env.PROJECT_NAME }}.zip"
+          $outputFile = "${{ env.PROJECT_NAME }}-windows-amd64.zip"
+          
+          if (Test-Path $zipFile) {
+            # 如果生成了 .zip，直接重命名
+            Rename-Item -Path $zipFile -NewName $outputFile
+            Write-Host "Renamed $zipFile to $outputFile"
+          } elseif (Test-Path $exeFile) {
+            # 如果生成了 .exe，打包成 zip
+            Compress-Archive -Path $exeFile -DestinationPath $outputFile -Force
+            Write-Host "Compressed $exeFile to $outputFile"
+          } else {
+            Write-Error "Error: No output file found. Expected $zipFile or $exeFile"
+            Write-Host "Current directory contents:"
+            Get-ChildItem | Format-Table Name, Length, LastWriteTime
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-package
