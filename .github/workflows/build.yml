@@ -62,22 +62,33 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           
+          # 设置 UTF-8 编码以支持中文字符
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+          chcp 65001 | Out-Null
+          
+          # 从环境变量获取项目名称（避免模板变量编码问题）
+          $PROJECT_NAME = $env:PROJECT_NAME
+          $APP_ID = $env:APP_ID
+          $ICON_PATH = $env:ICON_PATH
+          $CMD_PATH = $env:CMD_PATH
+          
           # 检查图标文件
-          if (!(Test-Path "${{ env.ICON_PATH }}")) {
+          if (!(Test-Path $ICON_PATH)) {
             Write-Error "Icon file not found"
             exit 1
           }
           
           # 获取图标绝对路径
-          $ICON_ABS_PATH = (Resolve-Path "${{ env.ICON_PATH }}").Path
+          $ICON_ABS_PATH = (Resolve-Path $ICON_PATH).Path
           
           # 执行构建
-          fyne package --app-id ${{ env.APP_ID }} --icon $ICON_ABS_PATH --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
+          fyne package --app-id $APP_ID --icon $ICON_ABS_PATH --name $PROJECT_NAME -src $CMD_PATH
           
           # 检查输出文件并处理
-          $exeFile = "${{ env.PROJECT_NAME }}.exe"
-          $zipFile = "${{ env.PROJECT_NAME }}.zip"
-          $outputFile = "${{ env.PROJECT_NAME }}-windows-amd64.zip"
+          $exeFile = "$PROJECT_NAME.exe"
+          $zipFile = "$PROJECT_NAME.zip"
+          $outputFile = "$PROJECT_NAME-windows-amd64.zip"
           
           if (Test-Path $zipFile) {
             # 如果生成了 zip，直接重命名
