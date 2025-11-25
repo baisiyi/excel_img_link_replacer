@@ -12,7 +12,6 @@ env:
   APP_ID: 'com.bestfulfill.excelimgreplacer'
   PROJECT_NAME: 'ExcelImgReplacer'
   ICON_PATH: 'icon.png'
-  ICON_ABS_PATH: "$(pwd)/icon.png"
   CMD_PATH: './cmd/desktop'
 
 jobs:
@@ -36,7 +35,8 @@ jobs:
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Icon file not found"; exit 1; fi
           # 简化：不指定 -os，让工具在原生环境 (linux/amd64) 中自动构建
-          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_ABS_PATH }} --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
+          ICON_ABS_PATH="$(pwd)/${{ env.ICON_PATH }}"
+          fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.tar.xz ./${{ env.PROJECT_NAME }}-linux-amd64.tar.xz
       - uses: actions/upload-artifact@v4
         with:
@@ -60,9 +60,13 @@ jobs:
       - name: Build and package Windows app
         shell: powershell
         run: |
-          if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Icon file not found"; exit 1; fi
+          if (!(Test-Path "${{ env.ICON_PATH }}")) {
+            Write-Error "Icon file not found"
+            exit 1
+          }
           # 简化：不指定 -os，让工具在原生环境 (windows/amd64) 中自动构建
-          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_ABS_PATH }} --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
+          $ICON_ABS_PATH = (Resolve-Path "${{ env.ICON_PATH }}").Path
+          fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
           Rename-Item -Path "${{ env.PROJECT_NAME }}.zip" -NewName "${{ env.PROJECT_NAME }}-windows-amd64.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -94,9 +98,19 @@ jobs:
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Icon file not found"; exit 1; fi
           export MACOSX_DEPLOYMENT_TARGET=10.14
+          ICON_ABS_PATH="$(pwd)/${{ env.ICON_PATH }}"
           # 简化：不指定 -os，让工具在原生环境 (darwin/amd64 或 darwin/arm64) 中自动构建
-          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_ABS_PATH }} --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
-          mv ./${{ env.PROJECT_NAME }}.zip ./${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip
+          fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
+          # macOS 上 fyne package 生成的是 .app 目录，需要打包成 .zip
+          if [ -d "${{ env.PROJECT_NAME }}.app" ]; then
+            zip -r "${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip" "${{ env.PROJECT_NAME }}.app"
+          elif [ -f "${{ env.PROJECT_NAME }}.zip" ]; then
+            mv ./${{ env.PROJECT_NAME }}.zip ./${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip
+          else
+            echo "Error: No output file found. Listing current directory:"
+            ls -la
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.name_suffix }}-package
