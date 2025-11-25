@@ -10,9 +10,9 @@ on:
 env:
   # Using a stable, recent Go version
   GO_VERSION: '1.25'
-  APP_ID: 'com.yourcompany.excelimgreplacer'
+  APP_ID: 'com.bestfulfill.excelimgreplacer'
   PROJECT_NAME: 'ExcelImgReplacer'
-  ICON_PATH: 'Icon.png'
+  ICON_PATH: 'icon.png'
   CMD_PATH: './cmd/desktop'
 
 jobs:
