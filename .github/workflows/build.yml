@@ -58,6 +58,11 @@ jobs:
       - name: Install the Fyne CLI tool
         run: go install fyne.io/tools/cmd/fyne@latest
       - name: Build and package Windows app
+        env:
+          PROJECT_NAME: ${{ env.PROJECT_NAME }}
+          APP_ID: ${{ env.APP_ID }}
+          ICON_PATH: ${{ env.ICON_PATH }}
+          CMD_PATH: ${{ env.CMD_PATH }}
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
@@ -73,32 +78,83 @@ jobs:
           $ICON_PATH = $env:ICON_PATH
           $CMD_PATH = $env:CMD_PATH
           
+          Write-Host "Project Name: $PROJECT_NAME"
+          Write-Host "App ID: $APP_ID"
+          Write-Host "Icon Path: $ICON_PATH"
+          Write-Host "Cmd Path: $CMD_PATH"
+          Write-Host "Current Directory: $(Get-Location)"
+          
           # 检查图标文件
           if (!(Test-Path $ICON_PATH)) {
-            Write-Error "Icon file not found"
+            Write-Error "Icon file not found: $ICON_PATH"
             exit 1
           }
           
           # 获取图标绝对路径
           $ICON_ABS_PATH = (Resolve-Path $ICON_PATH).Path
+          Write-Host "Icon Absolute Path: $ICON_ABS_PATH"
           
-          # 执行构建
-          fyne package --app-id $APP_ID --icon $ICON_ABS_PATH --name $PROJECT_NAME -src $CMD_PATH
+          # 列出构建前的文件
+          Write-Host "Files before build:"
+          Get-ChildItem -File | Select-Object Name, Length
+          
+          # 执行构建并捕获输出
+          Write-Host "Running fyne package command..."
+          $buildResult = fyne package --app-id $APP_ID --icon $ICON_ABS_PATH --name $PROJECT_NAME -src $CMD_PATH 2>&1
+          $buildExitCode = $LASTEXITCODE
+          
+          Write-Host "Build command exit code: $buildExitCode"
+          Write-Host "Build command output:"
+          $buildResult | ForEach-Object { Write-Host $_ }
+          
+          # 列出构建后的所有文件
+          Write-Host "Files after build:"
+          Get-ChildItem -File | Select-Object Name, Length
+          Write-Host "Directories after build:"
+          Get-ChildItem -Directory | Select-Object Name
           
           # 检查输出文件并处理
           $exeFile = "$PROJECT_NAME.exe"
           $zipFile = "$PROJECT_NAME.zip"
           $outputFile = "$PROJECT_NAME-windows-amd64.zip"
           
+          Write-Host "Looking for: $exeFile or $zipFile"
+          
+          # 尝试查找任何可能的输出文件（包括通配符匹配）
+          $allExeFiles = Get-ChildItem -Filter "*.exe" -File
+          $allZipFiles = Get-ChildItem -Filter "*.zip" -File
+          
+          Write-Host "Found .exe files:"
+          $allExeFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
+          Write-Host "Found .zip files:"
+          $allZipFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
+          
           if (Test-Path $zipFile) {
             # 如果生成了 zip，直接重命名
+            Write-Host "Found zip file, renaming..."
             Rename-Item -Path $zipFile -Destination $outputFile -Force
           } elseif (Test-Path $exeFile) {
             # 如果生成了 exe，打包成 zip
+            Write-Host "Found exe file, creating zip..."
             Compress-Archive -Path $exeFile -DestinationPath $outputFile -Force
+          } elseif ($allExeFiles.Count -gt 0) {
+            # 如果找到了任何 exe 文件，使用第一个
+            Write-Host "Using first found exe file: $($allExeFiles[0].Name)"
+            Compress-Archive -Path $allExeFiles[0].FullName -DestinationPath $outputFile -Force
+          } elseif ($allZipFiles.Count -gt 0) {
+            # 如果找到了任何 zip 文件，使用第一个
+            Write-Host "Using first found zip file: $($allZipFiles[0].Name)"
+            Rename-Item -Path $allZipFiles[0].FullName -Destination $outputFile -Force
           } else {
             Write-Error "Build failed: No output file found"
+            Write-Host "Current directory contents:"
+            Get-ChildItem | Format-Table -AutoSize
             exit 1
+          }
+          
+          Write-Host "Final output file: $outputFile"
+          if (Test-Path $outputFile) {
+            Write-Host "Output file size: $((Get-Item $outputFile).Length) bytes"
           }
       - uses: actions/upload-artifact@v4
         with:
