@@ -35,7 +35,7 @@ jobs:
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then touch ${{ env.ICON_PATH }}; fi
           # 简化：不指定 -os，让工具在原生环境 (linux/amd64) 中自动构建
-          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.tar.xz ./${{ env.PROJECT_NAME }}-linux-amd64.tar.xz
       - uses: actions/upload-artifact@v4
         with:
@@ -61,7 +61,7 @@ jobs:
         run: |
           if (!(Test-Path "${{ env.ICON_PATH }}")) { New-Item -ItemType File -Path "${{ env.ICON_PATH }}" }
           # 简化：不指定 -os，让工具在原生环境 (windows/amd64) 中自动构建
-          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
           Rename-Item -Path "${{ env.PROJECT_NAME }}.zip" -NewName "${{ env.PROJECT_NAME }}-windows-amd64.zip"
       - uses: actions/upload-artifact@v4
         with:
@@ -93,7 +93,7 @@ jobs:
         run: |
           if [ ! -f "${{ env.ICON_PATH }}" ]; then touch ${{ env.ICON_PATH }}; fi
           # 简化：不指定 -os，让工具在原生环境 (darwin/amd64 或 darwin/arm64) 中自动构建
-          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} ${{ env.CMD_PATH }}
+          fyne package --app-id ${{ env.APP_ID }} --icon ${{ env.ICON_PATH }} --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
           mv ./${{ env.PROJECT_NAME }}.zip ./${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip
       - uses: actions/upload-artifact@v4
         with:
