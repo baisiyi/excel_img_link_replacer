@@ -55,8 +55,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+
       - name: Install the Fyne CLI tool
         run: go install fyne.io/tools/cmd/fyne@latest
+        
       - name: Build and package Windows app
         env:
           PROJECT_NAME: ${{ env.PROJECT_NAME }}
@@ -67,95 +69,66 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           
-          # 设置 UTF-8 编码以支持中文字符
+          # 设置控制台编码为 UTF-8
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-          $OutputEncoding = [System.Text.Encoding]::UTF8
-          chcp 65001 | Out-Null
           
-          # 从环境变量获取项目名称（避免模板变量编码问题）
-          $PROJECT_NAME = $env:PROJECT_NAME
-          $APP_ID = $env:APP_ID
-          $ICON_PATH = $env:ICON_PATH
-          $CMD_PATH = $env:CMD_PATH
+          # 定义一个临时的纯英文构建名称，避免编码问题
+          $BUILD_NAME = "ExcelImageReplacer"
           
-          Write-Host "Project Name: $PROJECT_NAME"
-          Write-Host "App ID: $APP_ID"
-          Write-Host "Icon Path: $ICON_PATH"
-          Write-Host "Cmd Path: $CMD_PATH"
-          Write-Host "Current Directory: $(Get-Location)"
+          Write-Host "Build Name (Temporary): $BUILD_NAME"
+          Write-Host "Target Name (Final): $env:PROJECT_NAME"
           
-          # 检查图标文件
-          if (!(Test-Path $ICON_PATH)) {
-            Write-Error "Icon file not found: $ICON_PATH"
+          # 检查图标
+          if (!(Test-Path $env:ICON_PATH)) {
+            Write-Error "Icon file not found: $env:ICON_PATH"
             exit 1
           }
+          $ICON_ABS_PATH = (Resolve-Path $env:ICON_PATH).Path
           
-          # 获取图标绝对路径
-          $ICON_ABS_PATH = (Resolve-Path $ICON_PATH).Path
-          Write-Host "Icon Absolute Path: $ICON_ABS_PATH"
-          
-          # 列出构建前的文件
-          Write-Host "Files before build:"
-          Get-ChildItem -File | Select-Object Name, Length
-          
-          # 执行构建并捕获输出
+          # ===================================================
+          # 执行构建 (使用英文名)
+          # ===================================================
           Write-Host "Running fyne package command..."
-          $buildResult = fyne package --app-id $APP_ID --icon $ICON_ABS_PATH --name $PROJECT_NAME -src $CMD_PATH 2>&1
-          $buildExitCode = $LASTEXITCODE
           
-          Write-Host "Build command exit code: $buildExitCode"
-          Write-Host "Build command output:"
-          $buildResult | ForEach-Object { Write-Host $_ }
+          # 注意：这里使用了 $BUILD_NAME 而不是 $env:PROJECT_NAME
+          fyne package --app-id $env:APP_ID --icon $ICON_ABS_PATH --name $BUILD_NAME -src $env:CMD_PATH --release
           
-          # 列出构建后的所有文件
           Write-Host "Files after build:"
           Get-ChildItem -File | Select-Object Name, Length
-          Write-Host "Directories after build:"
-          Get-ChildItem -Directory | Select-Object Name
           
-          # 检查输出文件并处理
-          $exeFile = "$PROJECT_NAME.exe"
-          $zipFile = "$PROJECT_NAME.zip"
-          $outputFile = "$PROJECT_NAME-windows-amd64.zip"
+          # ===================================================
+          # 查找并重命名文件
+          # ===================================================
+          $exeBuilt = "$BUILD_NAME.exe"
+          $targetExe = "$env:PROJECT_NAME.exe"
+          $outputZip = "$env:PROJECT_NAME-windows-amd64.zip"
           
-          Write-Host "Looking for: $exeFile or $zipFile"
-          
-          # 尝试查找任何可能的输出文件（包括通配符匹配）
-          $allExeFiles = Get-ChildItem -Filter "*.exe" -File
-          $allZipFiles = Get-ChildItem -Filter "*.zip" -File
-          
-          Write-Host "Found .exe files:"
-          $allExeFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
-          Write-Host "Found .zip files:"
-          $allZipFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
-          
-          if (Test-Path $zipFile) {
-            # 如果生成了 zip，直接重命名
-            Write-Host "Found zip file, renaming..."
-            Rename-Item -Path $zipFile -Destination $outputFile -Force
-          } elseif (Test-Path $exeFile) {
-            # 如果生成了 exe，打包成 zip
-            Write-Host "Found exe file, creating zip..."
-            Compress-Archive -Path $exeFile -DestinationPath $outputFile -Force
-          } elseif ($allExeFiles.Count -gt 0) {
-            # 如果找到了任何 exe 文件，使用第一个
-            Write-Host "Using first found exe file: $($allExeFiles[0].Name)"
-            Compress-Archive -Path $allExeFiles[0].FullName -DestinationPath $outputFile -Force
-          } elseif ($allZipFiles.Count -gt 0) {
-            # 如果找到了任何 zip 文件，使用第一个
-            Write-Host "Using first found zip file: $($allZipFiles[0].Name)"
-            Rename-Item -Path $allZipFiles[0].FullName -Destination $outputFile -Force
+          if (Test-Path $exeBuilt) {
+            Write-Host "Build success! Found: $exeBuilt"
+            
+            # 重命名为中文名称
+            Write-Host "Renaming $exeBuilt to $targetExe"
+            Rename-Item -Path $exeBuilt -NewName $targetExe -Force
+            
+            # 打包成 Zip
+            Write-Host "Compressing to $outputZip"
+            Compress-Archive -Path $targetExe -DestinationPath $outputZip -Force
+            
           } else {
-            Write-Error "Build failed: No output file found"
-            Write-Host "Current directory contents:"
-            Get-ChildItem | Format-Table -AutoSize
-            exit 1
+            # 如果根目录没找到，尝试在源码目录找一下 (防止 fyne 版本差异)
+            $srcExe = Join-Path $env:CMD_PATH "$BUILD_NAME.exe"
+            if (Test-Path $srcExe) {
+                Write-Host "Found exe in source dir: $srcExe"
+                Move-Item -Path $srcExe -Destination ".\$targetExe" -Force
+                Compress-Archive -Path $targetExe -DestinationPath $outputZip -Force
+            } else {
+                Write-Error "Build failed: Expected output file '$exeBuilt' not found."
+                exit 1
+            }
           }
           
-          Write-Host "Final output file: $outputFile"
-          if (Test-Path $outputFile) {
-            Write-Host "Output file size: $((Get-Item $outputFile).Length) bytes"
-          }
+          Write-Host "Final artifact created: $outputZip"
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-package
