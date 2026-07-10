@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
@@ -19,115 +19,185 @@ import (
 
 func DefaultWindowSize() fyne.Size { return fyne.NewSize(960, 640) }
 
-// updateStatusText 更新状态文本，支持可点击的文件路径
-func updateStatusText(container *fyne.Container, message string, filePath string) {
-	container.RemoveAll()
+func updateStatusText(status *fyne.Container, message string, filePath string) {
+	status.RemoveAll()
+	label := widget.NewLabel(message)
+	label.Wrapping = fyne.TextWrapWord
+	status.Add(label)
 
 	if filePath != "" {
-		// 如果有文件路径，创建可点击的链接
-		statusLabel := canvas.NewText(message, nil)
-		statusLabel.TextStyle = fyne.TextStyle{}
-
-		// 创建文件路径按钮
 		pathButton := widget.NewButton(filePath, func() {
 			if err := tools.OpenFileDirectory(filePath); err != nil {
-				// 如果打开失败，尝试只打开目录
 				dir := filepath.Dir(filePath)
 				if err := tools.OpenDirectory(dir); err != nil {
-					// 如果还是失败，显示错误信息
 					dialog.ShowError(fmt.Errorf("无法打开文件目录: %v", err), nil)
 				}
 			}
 		})
 		pathButton.Importance = widget.LowImportance
-
-		container.Add(statusLabel)
-		container.Add(pathButton)
-	} else {
-		// 普通文本消息
-		statusLabel := canvas.NewText(message, nil)
-		statusLabel.TextStyle = fyne.TextStyle{}
-		container.Add(statusLabel)
+		status.Add(pathButton)
 	}
-
-	container.Refresh()
+	status.Refresh()
 }
 
-// 全局变量，用于在回调中访问
-var (
-	globalRunBtn     *widget.Button
-	globalDropObj    *widget.Card
-	globalChooseBtn  *widget.Button
-	globalProgress   *widget.ProgressBar
-	globalStatusText *fyne.Container
-)
-
 func BuildUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
-	// 绑定状态
 	selectedFile := binding.NewString()
-	selectedFile.Set("")
+	_ = selectedFile.Set("")
 
 	headers := binding.NewStringList()
-	headers.Set([]string{})
+	_ = headers.Set([]string{})
 
 	selectedHeaders := binding.NewStringList()
-	selectedHeaders.Set([]string{})
+	_ = selectedHeaders.Set([]string{})
+
+	defaultHeader := "商品图片链接"
+	isBusy := false
 
 	progress := widget.NewProgressBar()
 	progress.Hide()
-	globalProgress = progress
 
-	// 创建状态容器，初始为空
-	statusText := container.NewHBox()
-	globalStatusText = statusText
+	statusText := container.NewVBox()
+	dropLabel := widget.NewLabel("拖拽 Excel 到此处，或点击下方按钮选择")
+	dropLabel.Alignment = fyne.TextAlignCenter
+	dropObj := widget.NewCard("上传文件", "仅支持 .xlsx/.xlsm", container.NewCenter(dropLabel))
 
-	// 默认勾选项
-	defaultHeader := "商品图片链接"
+	sheetSelect := widget.NewSelect([]string{}, nil)
+	sheetSelect.PlaceHolder = "选择工作表"
+	sheetSelect.Disable()
 
-	// 多选列表 - 使用容器+复选框的方式，避免滚动时状态重置
-	var headerList *container.Scroll
-	var headerCheckboxes []*widget.Check
+	headerSearch := widget.NewEntry()
+	headerSearch.SetPlaceHolder("搜索表头")
+	headerSearch.Disable()
 
-	// 创建表头列表的函数
+	headerHolder := container.NewMax()
+	var runBtn *widget.Button
+	var chooseBtn *widget.Button
+
+	setBusy := func(busy bool) {
+		isBusy = busy
+		if busy {
+			runBtn.Disable()
+			chooseBtn.Disable()
+			sheetSelect.Disable()
+			headerSearch.Disable()
+			return
+		}
+		runBtn.Enable()
+		chooseBtn.Enable()
+		if len(sheetSelect.Options) > 0 {
+			sheetSelect.Enable()
+		}
+		items, _ := headers.Get()
+		if len(items) > 0 {
+			headerSearch.Enable()
+		}
+	}
+
 	createHeaderList := func() *container.Scroll {
 		items, _ := headers.Get()
-		headerCheckboxes = make([]*widget.Check, len(items))
+		filtered := filterHeaders(items, headerSearch.Text)
+		checkboxes := make([]fyne.CanvasObject, 0, len(filtered))
+		selected, _ := selectedHeaders.Get()
 
-		checkboxes := make([]fyne.CanvasObject, len(items))
-		for i, header := range items {
-			chk := widget.NewCheck(header, func(checked bool) {})
-			headerCheckboxes[i] = chk
+		if len(items) > 0 && len(filtered) == 0 {
+			return container.NewScroll(container.NewVBox(widget.NewLabel("没有匹配的表头")))
+		}
 
-			// 设置初始选中状态
-			selected, _ := selectedHeaders.Get()
+		for _, header := range filtered {
+			header := header
+			chk := widget.NewCheck(header, nil)
 			chk.SetChecked(contains(selected, header))
-
-			// 设置点击事件
 			chk.OnChanged = func(checked bool) {
 				cur, _ := selectedHeaders.Get()
 				if checked {
 					if !contains(cur, header) {
-						selectedHeaders.Append(header)
+						_ = selectedHeaders.Append(header)
 					}
-				} else {
-					removeString(&cur, header)
-					selectedHeaders.Set(cur)
+					return
 				}
+				removeString(&cur, header)
+				_ = selectedHeaders.Set(cur)
 			}
-
-			checkboxes[i] = chk
+			checkboxes = append(checkboxes, chk)
 		}
-
 		return container.NewScroll(container.NewVBox(checkboxes...))
 	}
 
-	headerList = createHeaderList()
+	refreshHeaderList := func() {
+		headerHolder.RemoveAll()
+		headerHolder.Add(createHeaderList())
+		headerHolder.Refresh()
+	}
+	refreshHeaderList()
 
-	// 处理按钮
-	runBtn := widget.NewButton("开始处理并生成", func() {
+	headerSearch.OnChanged = func(string) {
+		refreshHeaderList()
+	}
+
+	loadSheetHeaders := func(path, sheet string) {
+		headerSearch.SetText("")
+		headerSearch.Disable()
+		updateStatusText(statusText, fmt.Sprintf("正在读取工作表: %s", sheet), "")
+		loadHeaders(w, path, sheet, headers, selectedHeaders, defaultHeader, func() {
+			refreshHeaderList()
+			items, _ := headers.Get()
+			if len(items) > 0 {
+				headerSearch.Enable()
+			}
+			updateStatusText(statusText, fmt.Sprintf("已加载工作表: %s", sheet), "")
+		})
+	}
+
+	loadWorkbook := func(path string) {
+		if isBusy {
+			return
+		}
+		_ = selectedFile.Set(path)
+		dropLabel.SetText(filepath.Base(path))
+		updateStatusText(statusText, "正在读取工作簿...", "")
+		sheetSelect.Disable()
+		headerSearch.SetText("")
+		headerSearch.Disable()
+
+		go func() {
+			sheets, err := usecase.ListSheets(path)
+			fyne.Do(func() {
+				if err != nil {
+					dialog.ShowError(err, w)
+					updateStatusText(statusText, fmt.Sprintf("读取失败: %v", err), "")
+					return
+				}
+				if len(sheets) == 0 {
+					updateStatusText(statusText, "读取失败: Excel 无工作表", "")
+					return
+				}
+				sheetSelect.Options = sheets
+				sheetSelect.Refresh()
+				sheetSelect.Enable()
+				sheetSelect.SetSelected(sheets[0])
+			})
+		}()
+	}
+
+	sheetSelect.OnChanged = func(sheet string) {
+		if sheet == "" || isBusy {
+			return
+		}
+		file, _ := selectedFile.Get()
+		if file == "" {
+			return
+		}
+		loadSheetHeaders(file, sheet)
+	}
+
+	runBtn = widget.NewButton("开始处理并生成", func() {
 		file, _ := selectedFile.Get()
 		if file == "" {
 			dialog.ShowInformation("提示", "请先选择 Excel 文件", w)
+			return
+		}
+		if sheetSelect.Selected == "" {
+			dialog.ShowInformation("提示", "请先选择工作表", w)
 			return
 		}
 		sel, _ := selectedHeaders.Get()
@@ -135,37 +205,51 @@ func BuildUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
 			dialog.ShowInformation("提示", "请至少选择一个表头", w)
 			return
 		}
+		sheet := sheetSelect.Selected
+
 		progress.SetValue(0)
 		progress.Show()
 		updateStatusText(statusText, "处理中...", "")
+		setBusy(true)
 
-		// 异步执行
 		go func() {
-			outPath, err := usecase.ProcessExcel(file, sel, func(done, total int) {
-				// UI 更新必须在主线程
+			result, err := usecase.ProcessExcel(usecase.ProcessOptions{
+				Path:            file,
+				SheetName:       sheet,
+				SelectedHeaders: sel,
+				Concurrency:     8,
+				Timeout:         120 * time.Second,
+			}, func(p usecase.ProcessProgress) {
 				fyne.Do(func() {
-					progress.SetValue(float64(done) / float64(total))
+					if p.Total > 0 {
+						progress.SetValue(float64(p.Done) / float64(p.Total))
+					}
+					updateStatusText(statusText, progressMessage(p), "")
 				})
 			})
 
-			// 所有 UI 操作都包装在 fyne.Do 中
 			fyne.Do(func() {
+				defer setBusy(false)
+				defer progress.Hide()
 				if err != nil {
 					fyne.CurrentApp().SendNotification(&fyne.Notification{Title: "失败", Content: err.Error()})
 					updateStatusText(statusText, fmt.Sprintf("失败: %v", err), "")
-				} else {
-					fyne.CurrentApp().SendNotification(&fyne.Notification{Title: "完成", Content: filepath.Base(outPath)})
-					updateStatusText(statusText, "完成，输出: ", outPath)
+					return
 				}
-				progress.Hide()
+				title := "完成"
+				if len(result.Failed) > 0 {
+					title = "部分完成"
+				}
+				fyne.CurrentApp().SendNotification(&fyne.Notification{Title: title, Content: filepath.Base(result.OutputPath)})
+				updateStatusText(statusText, resultSummary(result), result.OutputPath)
 			})
 		}()
 	})
-	globalRunBtn = runBtn
 
-	// 文件选择按钮
-	var chooseBtn *widget.Button
 	chooseBtn = widget.NewButton("选择 Excel 文件", func() {
+		if isBusy {
+			return
+		}
 		fd := dialog.NewFileOpen(func(rc fyne.URIReadCloser, err error) {
 			if err != nil || rc == nil {
 				return
@@ -179,36 +263,15 @@ func BuildUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
 				dialog.ShowInformation("提示", "仅支持 .xlsx/.xlsm", w)
 				return
 			}
-			_ = selectedFile.Set(uri.Path())
-			loadHeaders(w, uri.Path(), headers, selectedHeaders, defaultHeader, func() {
-				// 重新创建列表
-				headerList = createHeaderList()
-				// 更新右侧面板
-				right := container.NewBorder(widget.NewLabel("选择需要处理的表头"), nil, nil, nil, headerList)
-				left := container.NewBorder(nil, container.NewVBox(globalRunBtn, globalProgress, globalStatusText), nil, nil,
-					container.NewVBox(globalDropObj, globalChooseBtn),
-				)
-				w.SetContent(container.NewHSplit(left, right))
-			})
+			loadWorkbook(uri.Path())
 		}, w)
 		fd.SetFilter(storage.NewExtensionFileFilter([]string{".xlsx", ".xlsm"}))
-		// 设置弹窗为可调整大小
 		fd.Resize(fyne.NewSize(800, 600))
 		fd.Show()
 	})
-	globalChooseBtn = chooseBtn
 
-	// 拖拽区
-	var dropLabel *canvas.Text
-	var drop *fyne.Container
-	var dropObj *widget.Card
-	dropLabel = canvas.NewText("拖拽 Excel 到此处，或点击下方按钮选择", nil)
-	drop = container.NewMax(container.NewCenter(dropLabel))
-	dropObj = widget.NewCard("上传文件", "仅支持 .xlsx/.xlsm", drop)
-	globalDropObj = dropObj
-	// 窗口级拖拽处理
 	w.SetOnDropped(func(pos fyne.Position, uris []fyne.URI) {
-		if len(uris) == 0 {
+		if isBusy || len(uris) == 0 {
 			return
 		}
 		u := uris[0]
@@ -216,25 +279,72 @@ func BuildUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
 			dialog.ShowInformation("提示", "仅支持 .xlsx/.xlsm", w)
 			return
 		}
-		_ = selectedFile.Set(u.Path())
-		loadHeaders(w, u.Path(), headers, selectedHeaders, defaultHeader, func() {
-			// 重新创建列表
-			headerList = createHeaderList()
-			// 更新右侧面板
-			right := container.NewBorder(widget.NewLabel("选择需要处理的表头"), nil, nil, nil, headerList)
-			left := container.NewBorder(nil, container.NewVBox(globalRunBtn, globalProgress, globalStatusText), nil, nil,
-				container.NewVBox(globalDropObj, globalChooseBtn),
-			)
-			w.SetContent(container.NewHSplit(left, right))
-		})
+		loadWorkbook(u.Path())
 	})
 
-	// 布局
 	left := container.NewBorder(nil, container.NewVBox(runBtn, progress, statusText), nil, nil,
 		container.NewVBox(dropObj, chooseBtn),
 	)
-	right := container.NewBorder(widget.NewLabel("选择需要处理的表头"), nil, nil, nil, headerList)
+	right := container.NewBorder(
+		container.NewVBox(
+			widget.NewLabel("选择工作表"),
+			sheetSelect,
+			container.NewBorder(nil, nil, widget.NewLabel("选择需要处理的表头"), nil, headerSearch),
+		),
+		nil,
+		nil,
+		nil,
+		headerHolder,
+	)
 	return container.NewHSplit(left, right)
+}
+
+func progressMessage(p usecase.ProcessProgress) string {
+	switch p.Stage {
+	case usecase.StageDownload:
+		return fmt.Sprintf("下载中: %d/%d", p.Done, p.Total)
+	case usecase.StageWrite:
+		return fmt.Sprintf("写入中: %d/%d", p.Done, p.Total)
+	default:
+		return "处理中..."
+	}
+}
+
+func resultSummary(result usecase.ProcessResult) string {
+	lines := []string{
+		fmt.Sprintf("处理完成: 共 %d 个单元格，成功 %d 个，失败 %d 个。", result.Total, result.Success, len(result.Failed)),
+		"输出:",
+	}
+	if len(result.Failed) == 0 {
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "失败摘要:")
+	limit := len(result.Failed)
+	if limit > 5 {
+		limit = 5
+	}
+	for i := 0; i < limit; i++ {
+		failure := result.Failed[i]
+		lines = append(lines, fmt.Sprintf("- %s %s: %v", failure.Cell, failure.Stage, failure.Err))
+	}
+	if len(result.Failed) > limit {
+		lines = append(lines, fmt.Sprintf("还有 %d 个失败未显示。", len(result.Failed)-limit))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func filterHeaders(headers []string, query string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return headers
+	}
+	filtered := make([]string, 0, len(headers))
+	for _, header := range headers {
+		if strings.Contains(strings.ToLower(header), query) {
+			filtered = append(filtered, header)
+		}
+	}
+	return filtered
 }
 
 func isExcel(name string) bool {

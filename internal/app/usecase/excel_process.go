@@ -2,7 +2,9 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"pic_tool/internal/app/tools"
 	"strings"
@@ -11,99 +13,267 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// ProcessExcel
-func ProcessExcel(path string, selectedHeaders []string, progressCb func(int, int)) (string, error) {
-	f, err := excelize.OpenFile(path)
+const (
+	defaultConcurrency = 8
+	defaultTimeout     = 120 * time.Second
+
+	StageValidate = "validate"
+	StageDownload = "download"
+	StageWrite    = "write"
+)
+
+type ProcessOptions struct {
+	Path            string
+	SheetName       string
+	SelectedHeaders []string
+	Concurrency     int
+	Timeout         time.Duration
+}
+
+type ProcessResult struct {
+	OutputPath string
+	Total      int
+	Success    int
+	Failed     []CellFailure
+}
+
+type CellFailure struct {
+	Sheet string
+	Cell  string
+	URL   string
+	Stage string
+	Err   error
+}
+
+type ProcessProgress struct {
+	Stage string
+	Done  int
+	Total int
+}
+
+// ProcessExcel replaces image links in the selected sheet and returns a
+// structured report. Individual cell failures do not abort the whole run.
+func ProcessExcel(opts ProcessOptions, progressCb func(ProcessProgress)) (ProcessResult, error) {
+	var result ProcessResult
+	if opts.Path == "" {
+		return result, errors.New("excel 路径为空")
+	}
+	if len(opts.SelectedHeaders) == 0 {
+		return result, errors.New("未选择表头")
+	}
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = defaultConcurrency
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = defaultTimeout
+	}
+	if progressCb == nil {
+		progressCb = func(ProcessProgress) {}
+	}
+
+	f, err := excelize.OpenFile(opts.Path)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	defer f.Close()
 
 	sheets := f.GetSheetList()
 	if len(sheets) == 0 {
-		return "", fmt.Errorf("excel 无工作表")
+		return result, fmt.Errorf("excel 无工作表")
 	}
-	sheet := sheets[0]
+	sheet := opts.SheetName
+	if sheet == "" {
+		sheet = sheets[0]
+	}
+	if !contains(sheets, sheet) {
+		return result, fmt.Errorf("工作表不存在: %s", sheet)
+	}
 
-	// 读首行表头
 	rows, err := f.GetRows(sheet)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	if len(rows) == 0 {
-		return "", fmt.Errorf("首行为空")
+		return result, fmt.Errorf("首行为空")
 	}
-	header := rows[0]
 
-	// 选中列索引
-	headerIndex := make(map[int]string)
-	for colIdx, colName := range header {
-		if contains(selectedHeaders, strings.TrimSpace(colName)) {
-			headerIndex[colIdx] = colName
+	headerIndex := selectedHeaderIndexes(rows[0], opts.SelectedHeaders)
+	if len(headerIndex) == 0 {
+		return result, fmt.Errorf("未找到选中表头")
+	}
+
+	jobs, failures := collectImageJobs(sheet, rows, headerIndex)
+	result.Failed = append(result.Failed, failures...)
+	result.Total = len(jobs)
+	if result.Total == 0 {
+		return result, fmt.Errorf("未找到可处理链接")
+	}
+
+	validURLs := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		if job.valid {
+			validURLs = append(validURLs, job.url)
 		}
 	}
-	if len(headerIndex) == 0 {
-		return "", fmt.Errorf("未找到选中表头")
+
+	progressCb(ProcessProgress{Stage: StageDownload, Done: 0, Total: len(tools.Unique(validURLs))})
+	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+	downloaded, err := tools.BatchGetCDNImageBytes(ctx, validURLs, opts.Concurrency)
+	if err != nil {
+		return result, err
+	}
+	progressCb(ProcessProgress{Stage: StageDownload, Done: len(downloaded.Images) + len(downloaded.Failures), Total: len(tools.Unique(validURLs))})
+
+	writeDone := 0
+	progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
+	for _, job := range jobs {
+		if !job.valid {
+			writeDone++
+			progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
+			continue
+		}
+
+		img, ok := downloaded.Images[job.url]
+		if !ok || len(img) == 0 {
+			err := downloaded.Failures[job.url]
+			if err == nil {
+				err = errors.New("download failed")
+			}
+			result.Failed = append(result.Failed, CellFailure{
+				Sheet: sheet,
+				Cell:  job.cell,
+				URL:   job.url,
+				Stage: StageDownload,
+				Err:   err,
+			})
+			writeDone++
+			progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
+			continue
+		}
+
+		if err := f.SetCellValue(sheet, job.cell, ""); err != nil {
+			result.Failed = append(result.Failed, CellFailure{
+				Sheet: sheet,
+				Cell:  job.cell,
+				URL:   job.url,
+				Stage: StageWrite,
+				Err:   fmt.Errorf("clear cell: %w", err),
+			})
+			writeDone++
+			progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
+			continue
+		}
+		if err := tools.SetCellPicture(f, sheet, job.cell, job.colName, job.rowIdx, img); err != nil {
+			result.Failed = append(result.Failed, CellFailure{
+				Sheet: sheet,
+				Cell:  job.cell,
+				URL:   job.url,
+				Stage: StageWrite,
+				Err:   err,
+			})
+			writeDone++
+			progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
+			continue
+		}
+		result.Success++
+		writeDone++
+		progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
 	}
 
-	// 收集所有 URL
-	type cellPos struct{ ColIdx, RowIdx int }
-	urlByPos := make(map[cellPos]string)
-	urls := make([]string, 0)
-	for r := 1; r < len(rows); r++ { // 从第二行
+	result.OutputPath = uniqueOutputPath(opts.Path)
+	if err := f.SaveAs(result.OutputPath); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+type imageJob struct {
+	cell    string
+	colName string
+	rowIdx  int
+	url     string
+	valid   bool
+}
+
+func selectedHeaderIndexes(header []string, selectedHeaders []string) map[int]string {
+	selected := make(map[string]bool, len(selectedHeaders))
+	for _, h := range selectedHeaders {
+		selected[strings.TrimSpace(h)] = true
+	}
+
+	headerIndex := make(map[int]string)
+	for colIdx, colName := range header {
+		trimmed := strings.TrimSpace(colName)
+		if selected[trimmed] {
+			headerIndex[colIdx] = trimmed
+		}
+	}
+	return headerIndex
+}
+
+func collectImageJobs(sheet string, rows [][]string, headerIndex map[int]string) ([]imageJob, []CellFailure) {
+	jobs := make([]imageJob, 0)
+	failures := make([]CellFailure, 0)
+	for r := 1; r < len(rows); r++ {
 		row := rows[r]
 		for c := range headerIndex {
-			if c < len(row) {
-				u := strings.TrimSpace(row[c])
-				if u != "" && strings.HasPrefix(u, "http") {
-					urlByPos[cellPos{ColIdx: c, RowIdx: r}] = u
-					urls = append(urls, u)
-				}
+			if c >= len(row) {
+				continue
+			}
+			rawURL := strings.TrimSpace(row[c])
+			if rawURL == "" {
+				continue
+			}
+			colName, err := excelize.ColumnNumberToName(c + 1)
+			if err != nil {
+				continue
+			}
+			cell, err := excelize.CoordinatesToCellName(c+1, r+1)
+			if err != nil {
+				continue
+			}
+			job := imageJob{
+				cell:    cell,
+				colName: colName,
+				rowIdx:  r,
+				url:     rawURL,
+				valid:   tools.IsHTTPImageURL(rawURL),
+			}
+			jobs = append(jobs, job)
+			if !job.valid {
+				failures = append(failures, CellFailure{
+					Sheet: sheet,
+					Cell:  cell,
+					URL:   rawURL,
+					Stage: StageValidate,
+					Err:   errors.New("invalid image url"),
+				})
 			}
 		}
 	}
-	if len(urls) == 0 {
-		return "", fmt.Errorf("未找到可用链接")
-	}
+	return jobs, failures
+}
 
-	if progressCb == nil {
-		progressCb = func(int, int) {}
-	}
-	progressCb(0, len(urls))
-
-	// 批量下载
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	bodies, err := tools.BatchGetCDNImageBytes(ctx, urls, 8)
-	if err != nil {
-		return "", err
-	}
-
-	// 写入图片
-	done := 0
-	for pos, u := range urlByPos {
-		img, ok := bodies[u]
-		if !ok || len(img) == 0 {
-			done++
-			progressCb(done, len(urls))
-			continue
-		}
-		colName, _ := excelize.ColumnNumberToName(pos.ColIdx + 1)
-		cell, _ := excelize.CoordinatesToCellName(pos.ColIdx+1, pos.RowIdx+1)
-		_ = f.SetCellValue(sheet, cell, "")
-		tools.SetCellPicture(f, sheet, cell, colName, pos.RowIdx, img)
-		done++
-		progressCb(done, len(urls))
-	}
-
-	// 输出副本
+func uniqueOutputPath(path string) string {
 	ext := filepath.Ext(path)
 	base := strings.TrimSuffix(filepath.Base(path), ext)
-	out := filepath.Join(filepath.Dir(path), fmt.Sprintf("%s_output%s", base, ext))
-	if err := f.SaveAs(out); err != nil {
-		return "", err
+	dir := filepath.Dir(path)
+	out := filepath.Join(dir, fmt.Sprintf("%s_output%s", base, ext))
+	if !fileExists(out) {
+		return out
 	}
-	return out, nil
+	for i := 1; ; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("%s_output_%d%s", base, i, ext))
+		if !fileExists(candidate) {
+			return candidate
+		}
+	}
+}
+
+func fileExists(filePath string) bool {
+	_, err := os.Stat(filePath)
+	return err == nil
 }
 
 func contains(arr []string, s string) bool {

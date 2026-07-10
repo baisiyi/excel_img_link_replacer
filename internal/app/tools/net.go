@@ -18,10 +18,17 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const MaxImageBytes int64 = 15 * 1024 * 1024
+
 var (
 	cdnHttpClient     *http.Client
 	cdnHttpClientOnce sync.Once
 )
+
+type BatchImageResult struct {
+	Images   map[string][]byte
+	Failures map[string]error
+}
 
 // getCDNHTTPClient 返回一个为 CDN 访问优化的全局 HTTP 客户端（懒加载，线程安全）
 func getCDNHTTPClient() *http.Client {
@@ -50,11 +57,8 @@ func getCDNHTTPClient() *http.Client {
 
 // GetCDNImageBytes 通过 CDN URL 获取内容（单个），返回内容字节
 func GetCDNImageBytes(ctx context.Context, rawURL string) ([]byte, error) {
-	if rawURL == "" {
-		return nil, errors.New("url is empty")
-	}
-	if _, err := url.ParseRequestURI(rawURL); err != nil {
-		return nil, fmt.Errorf("invalid url: %v", err)
+	if !IsHTTPImageURL(rawURL) {
+		return nil, fmt.Errorf("invalid image url: %s", rawURL)
 	}
 
 	client := getCDNHTTPClient()
@@ -71,6 +75,10 @@ func GetCDNImageBytes(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, err
 	}
 
+	if resp.ContentLength > MaxImageBytes {
+		return nil, fmt.Errorf("image too large: %d bytes", resp.ContentLength)
+	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -78,9 +86,12 @@ func GetCDNImageBytes(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxImageBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if int64(len(body)) > MaxImageBytes {
+		return nil, fmt.Errorf("image too large: over %d bytes", MaxImageBytes)
 	}
 
 	// 仅支持 jpeg/jpg、png、webp，其它格式返回不支持
@@ -102,11 +113,11 @@ func GetCDNImageBytes(ctx context.Context, rawURL string) ([]byte, error) {
 
 // BatchGetCDNImageBytes 批量获取 CDN 内容（并发）
 // concurrency: 并发数量，<=0 使用默认 5
-func BatchGetCDNImageBytes(ctx context.Context, urls []string, concurrency int) (map[string][]byte, error) {
-
-	var resultMap sync.Map
-
-	results := make(map[string][]byte)
+func BatchGetCDNImageBytes(ctx context.Context, urls []string, concurrency int) (BatchImageResult, error) {
+	results := BatchImageResult{
+		Images:   make(map[string][]byte),
+		Failures: make(map[string]error),
+	}
 	if len(urls) == 0 {
 		return results, nil
 	}
@@ -118,29 +129,39 @@ func BatchGetCDNImageBytes(ctx context.Context, urls []string, concurrency int) 
 
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
+	var mu sync.Mutex
 
 	for i := range urls {
 		l := urls[i]
 		eg.Go(func() error {
 			body, err := GetCDNImageBytes(ctx, l)
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
+				results.Failures[l] = err
 				return nil
 			}
-			resultMap.Store(l, body)
-			return err
+			results.Images[l] = body
+			return nil
 		})
 	}
 
 	if err := eg.Wait(); err != nil {
-		return nil, err
+		return results, err
 	}
 
-	resultMap.Range(func(key, value interface{}) bool {
-		results[key.(string)] = value.([]byte)
-		return true
-	})
-
 	return results, nil
+}
+
+func IsHTTPImageURL(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
 // IsJPEGMagicNumber 检查 JPEG 魔数

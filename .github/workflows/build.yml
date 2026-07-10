@@ -2,24 +2,21 @@ name: Build and Release Desktop App
 
 on:
   push:
-    tags: [ 'v*' ]
-    branches: [ main ]
+    tags: ["v*"]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
-  GO_VERSION: '1.25'
-  APP_ID: 'com.bestfulfill.excelimgreplacer'
-  PROJECT_NAME: 'Excel图片链接替换工具'
-  ICON_PATH: 'icon.png'
-  CMD_PATH: './cmd/desktop'
+  GO_VERSION: "1.24.7"
+  APP_ID: "com.bestfulfill.excelimgreplacer"
+  PROJECT_NAME: "Excel图片链接替换工具"
+  ICON_PATH: "icon.png"
+  CMD_PATH: "./cmd/desktop"
 
 jobs:
-  # =========================================================
-  # 1. Linux 构建 (amd64)
-  # =========================================================
-  build-linux:
-    name: Build Linux (amd64)
+  quality:
+    name: Test and Vet
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,38 +24,25 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Install Linux build dependencies
+      - name: Install Linux test dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
-      - name: Install the Fyne CLI tool
-        run: go install fyne.io/tools/cmd/fyne@latest
-      - name: Build and package Linux app
-        run: |
-          if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Icon file not found"; exit 1; fi
-          # 简化：不指定 -os，让工具在原生环境 (linux/amd64) 中自动构建
-          ICON_ABS_PATH="$(pwd)/${{ env.ICON_PATH }}"
-          fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
-          mv ./${{ env.PROJECT_NAME }}.tar.xz ./${{ env.PROJECT_NAME }}-linux-amd64.tar.xz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-package
-          path: ./${{ env.PROJECT_NAME }}-linux-amd64.tar.xz
+      - name: Run tests
+        run: go test ./...
+      - name: Run vet
+        run: go vet ./...
 
-  # =========================================================
-  # 2. Windows 构建 (amd64)
-  # =========================================================
   build-windows:
     name: Build Windows (amd64)
     runs-on: windows-latest
+    needs: quality
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-
       - name: Install the Fyne CLI tool
         run: go install fyne.io/tools/cmd/fyne@latest
-        
       - name: Build and package Windows app
         env:
           PROJECT_NAME: ${{ env.PROJECT_NAME }}
@@ -68,84 +52,48 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          
-          # 设置控制台编码为 UTF-8
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-          
-          # 定义一个临时的纯英文构建名称，避免编码问题
+
           $BUILD_NAME = "ExcelImageReplacer"
-          
-          Write-Host "Build Name (Temporary): $BUILD_NAME"
-          Write-Host "Target Name (Final): $env:PROJECT_NAME"
-          
-          # 检查图标
           if (!(Test-Path $env:ICON_PATH)) {
             Write-Error "Icon file not found: $env:ICON_PATH"
             exit 1
           }
           $ICON_ABS_PATH = (Resolve-Path $env:ICON_PATH).Path
-          
-          # ===================================================
-          # 执行构建 (使用英文名)
-          # ===================================================
-          Write-Host "Running fyne package command..."
-          
-          # 注意：这里使用了 $BUILD_NAME 而不是 $env:PROJECT_NAME
+
           fyne package --app-id $env:APP_ID --icon $ICON_ABS_PATH --name $BUILD_NAME -src $env:CMD_PATH --release
-          
-          Write-Host "Files after build:"
-          Get-ChildItem -File | Select-Object Name, Length
-          
-          # ===================================================
-          # 查找并重命名文件
-          # ===================================================
+
           $exeBuilt = "$BUILD_NAME.exe"
           $targetExe = "$env:PROJECT_NAME.exe"
           $outputZip = "$env:PROJECT_NAME-windows-amd64.zip"
-          
-          if (Test-Path $exeBuilt) {
-            Write-Host "Build success! Found: $exeBuilt"
-            
-            # 重命名为中文名称
-            Write-Host "Renaming $exeBuilt to $targetExe"
-            Rename-Item -Path $exeBuilt -NewName $targetExe -Force
-            
-            # 打包成 Zip
-            Write-Host "Compressing to $outputZip"
-            Compress-Archive -Path $targetExe -DestinationPath $outputZip -Force
-            
-          } else {
-            # 如果根目录没找到，尝试在源码目录找一下 (防止 fyne 版本差异)
-            $srcExe = Join-Path $env:CMD_PATH "$BUILD_NAME.exe"
-            if (Test-Path $srcExe) {
-                Write-Host "Found exe in source dir: $srcExe"
-                Move-Item -Path $srcExe -Destination ".\$targetExe" -Force
-                Compress-Archive -Path $targetExe -DestinationPath $outputZip -Force
-            } else {
-                Write-Error "Build failed: Expected output file '$exeBuilt' not found."
-                exit 1
-            }
-          }
-          
-          Write-Host "Final artifact created: $outputZip"
 
+          if (Test-Path $exeBuilt) {
+            Rename-Item -Path $exeBuilt -NewName $targetExe -Force
+          } else {
+            $srcExe = Join-Path $env:CMD_PATH "$BUILD_NAME.exe"
+            if (!(Test-Path $srcExe)) {
+              Write-Error "Build failed: Expected output file '$exeBuilt' not found."
+              exit 1
+            }
+            Move-Item -Path $srcExe -Destination ".\$targetExe" -Force
+          }
+
+          Compress-Archive -Path $targetExe -DestinationPath $outputZip -Force
       - uses: actions/upload-artifact@v4
         with:
           name: windows-package
           path: ./${{ env.PROJECT_NAME }}-windows-amd64.zip
 
-  # =========================================================
-  # 3. macOS 构建 (Intel & Apple Silicon)
-  # =========================================================
   build-macos:
     name: Build macOS (${{ matrix.name_suffix }})
     runs-on: ${{ matrix.os }}
+    needs: quality
     strategy:
       matrix:
         include:
-          - os: macos-13 # Intel (amd64)
+          - os: macos-13
             name_suffix: intel
-          - os: macos-14 # Apple Silicon (arm64)
+          - os: macos-14
             name_suffix: arm64
     steps:
       - uses: actions/checkout@v4
@@ -160,9 +108,7 @@ jobs:
           if [ ! -f "${{ env.ICON_PATH }}" ]; then echo "Icon file not found"; exit 1; fi
           export MACOSX_DEPLOYMENT_TARGET=10.14
           ICON_ABS_PATH="$(pwd)/${{ env.ICON_PATH }}"
-          # 简化：不指定 -os，让工具在原生环境 (darwin/amd64 或 darwin/arm64) 中自动构建
           fyne package --app-id ${{ env.APP_ID }} --icon "$ICON_ABS_PATH" --name ${{ env.PROJECT_NAME }} -src ${{ env.CMD_PATH }}
-          # macOS 上 fyne package 生成的是 .app 目录，需要打包成 .zip
           if [ -d "${{ env.PROJECT_NAME }}.app" ]; then
             zip -r "${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip" "${{ env.PROJECT_NAME }}.app"
           elif [ -f "${{ env.PROJECT_NAME }}.zip" ]; then
@@ -177,13 +123,10 @@ jobs:
           name: macos-${{ matrix.name_suffix }}-package
           path: ./${{ env.PROJECT_NAME }}-macos-${{ matrix.name_suffix }}.zip
 
-  # =========================================================
-  # 4. 创建 GitHub Release
-  # =========================================================
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-windows, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write

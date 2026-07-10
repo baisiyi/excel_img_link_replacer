@@ -11,9 +11,9 @@ import (
 	"golang.org/x/image/draw"
 )
 
-func SetCellPicture(f *excelize.File, sheet, cell, col string, row int, imageData []byte) bool {
+func SetCellPicture(f *excelize.File, sheet, cell, col string, row int, imageData []byte) error {
 	if len(imageData) == 0 {
-		return false
+		return errors.New("empty image data")
 	}
 
 	var (
@@ -23,7 +23,7 @@ func SetCellPicture(f *excelize.File, sheet, cell, col string, row int, imageDat
 
 	processedImage, err := processImageForExcel(imageData)
 	if err != nil {
-		return false
+		return err
 	}
 	pic := &excelize.Picture{
 		Extension: ".png",
@@ -35,12 +35,16 @@ func SetCellPicture(f *excelize.File, sheet, cell, col string, row int, imageDat
 			AutoFitIgnoreAspect: false,
 		},
 	}
-	err = f.SetColWidth(sheet, col, col, cellWidthChars)
-	err = f.SetRowHeight(sheet, row+1, cellHeightPoints)
-	if err = f.AddPictureFromBytes(sheet, cell, pic); err != nil {
-		return false
+	if err := f.SetColWidth(sheet, col, col, cellWidthChars); err != nil {
+		return fmt.Errorf("set column width: %w", err)
 	}
-	return true
+	if err := f.SetRowHeight(sheet, row+1, cellHeightPoints); err != nil {
+		return fmt.Errorf("set row height: %w", err)
+	}
+	if err := f.AddPictureFromBytes(sheet, cell, pic); err != nil {
+		return fmt.Errorf("add picture: %w", err)
+	}
+	return nil
 }
 
 func processImageForExcel(imageData []byte) ([]byte, error) {
