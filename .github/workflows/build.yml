@@ -139,7 +139,7 @@ jobs:
           - 首次下载或运行时，浏览器、Windows Defender SmartScreen 或安全软件可能出现安全提示。
           - 如出现 SmartScreen，请点击“更多信息”后选择“仍要运行”。
           - 该 Windows 包仅建议通过企业内部可信渠道小范围分发。
-          - macOS 仅提供 Apple Silicon / arm64 二进制包；Intel Mac 用户如有需要请自行编译。
+          - 使用教程：https://bestfulfill.feishu.cn/wiki/VdpGwf0yaiJX1DkWTdfcwB5hnAc
           EOF
       - uses: softprops/action-gh-release@v2
         with:
