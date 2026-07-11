@@ -28,8 +28,8 @@ func TestProcessImageForExcelNormalizesPNGAndJPEG(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decode processed image: %v", err)
 			}
-			if got := img.Bounds().Dx(); got != 360 {
-				t.Fatalf("processed image width = %d, want 360", got)
+			if got := img.Bounds().Dx(); got != 720 {
+				t.Fatalf("processed image width = %d, want 720", got)
 			}
 		})
 	}
