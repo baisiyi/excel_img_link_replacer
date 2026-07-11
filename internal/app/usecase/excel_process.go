@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"pic_tool/internal/app/tools"
+	"sort"
 	"strings"
 	"time"
 
@@ -102,11 +103,16 @@ func ProcessExcel(opts ProcessOptions, progressCb func(ProcessProgress)) (Proces
 		return result, fmt.Errorf("未找到选中表头")
 	}
 
-	jobs, failures := collectImageJobs(sheet, rows, headerIndex)
+	imageColumns := imageColumnIndexes(headerIndex)
+	jobs, failures := collectImageJobs(sheet, rows, headerIndex, imageColumns)
 	result.Failed = append(result.Failed, failures...)
 	result.Total = len(jobs)
 	if result.Total == 0 {
 		return result, fmt.Errorf("未找到可处理链接")
+	}
+
+	if err := insertImageColumns(f, sheet, headerIndex, imageColumns); err != nil {
+		return result, err
 	}
 
 	validURLs := make([]string, 0, len(jobs))
@@ -152,19 +158,7 @@ func ProcessExcel(opts ProcessOptions, progressCb func(ProcessProgress)) (Proces
 			continue
 		}
 
-		if err := f.SetCellValue(sheet, job.cell, ""); err != nil {
-			result.Failed = append(result.Failed, CellFailure{
-				Sheet: sheet,
-				Cell:  job.cell,
-				URL:   job.url,
-				Stage: StageWrite,
-				Err:   fmt.Errorf("clear cell: %w", err),
-			})
-			writeDone++
-			progressCb(ProcessProgress{Stage: StageWrite, Done: writeDone, Total: result.Total})
-			continue
-		}
-		if err := tools.SetCellPicture(f, sheet, job.cell, job.colName, job.rowIdx, img); err != nil {
+		if err := tools.SetCellPicture(f, sheet, job.pictureCell, job.pictureColName, job.rowIdx, img); err != nil {
 			result.Failed = append(result.Failed, CellFailure{
 				Sheet: sheet,
 				Cell:  job.cell,
@@ -189,11 +183,12 @@ func ProcessExcel(opts ProcessOptions, progressCb func(ProcessProgress)) (Proces
 }
 
 type imageJob struct {
-	cell    string
-	colName string
-	rowIdx  int
-	url     string
-	valid   bool
+	cell           string
+	pictureCell    string
+	pictureColName string
+	rowIdx         int
+	url            string
+	valid          bool
 }
 
 func selectedHeaderIndexes(header []string, selectedHeaders []string) map[int]string {
@@ -212,12 +207,12 @@ func selectedHeaderIndexes(header []string, selectedHeaders []string) map[int]st
 	return headerIndex
 }
 
-func collectImageJobs(sheet string, rows [][]string, headerIndex map[int]string) ([]imageJob, []CellFailure) {
+func collectImageJobs(sheet string, rows [][]string, headerIndex map[int]string, imageColumns map[int]int) ([]imageJob, []CellFailure) {
 	jobs := make([]imageJob, 0)
 	failures := make([]CellFailure, 0)
 	for r := 1; r < len(rows); r++ {
 		row := rows[r]
-		for c := range headerIndex {
+		for _, c := range sortedHeaderColumns(headerIndex) {
 			if c >= len(row) {
 				continue
 			}
@@ -225,20 +220,29 @@ func collectImageJobs(sheet string, rows [][]string, headerIndex map[int]string)
 			if rawURL == "" {
 				continue
 			}
-			colName, err := excelize.ColumnNumberToName(c + 1)
-			if err != nil {
-				continue
-			}
 			cell, err := excelize.CoordinatesToCellName(c+1, r+1)
 			if err != nil {
 				continue
 			}
+			pictureColIdx, ok := imageColumns[c]
+			if !ok {
+				continue
+			}
+			pictureColName, err := excelize.ColumnNumberToName(pictureColIdx + 1)
+			if err != nil {
+				continue
+			}
+			pictureCell, err := excelize.CoordinatesToCellName(pictureColIdx+1, r+1)
+			if err != nil {
+				continue
+			}
 			job := imageJob{
-				cell:    cell,
-				colName: colName,
-				rowIdx:  r,
-				url:     rawURL,
-				valid:   tools.IsHTTPImageURL(rawURL),
+				cell:           cell,
+				pictureCell:    pictureCell,
+				pictureColName: pictureColName,
+				rowIdx:         r,
+				url:            rawURL,
+				valid:          tools.IsHTTPImageURL(rawURL),
 			}
 			jobs = append(jobs, job)
 			if !job.valid {
@@ -253,6 +257,55 @@ func collectImageJobs(sheet string, rows [][]string, headerIndex map[int]string)
 		}
 	}
 	return jobs, failures
+}
+
+func imageColumnIndexes(headerIndex map[int]string) map[int]int {
+	selectedCols := sortedHeaderColumns(headerIndex)
+	imageColumns := make(map[int]int, len(selectedCols))
+	for _, colIdx := range selectedCols {
+		insertionsBeforeOrAt := 0
+		for _, selectedCol := range selectedCols {
+			if selectedCol <= colIdx {
+				insertionsBeforeOrAt++
+			}
+		}
+		imageColumns[colIdx] = colIdx + insertionsBeforeOrAt
+	}
+	return imageColumns
+}
+
+func insertImageColumns(f *excelize.File, sheet string, headerIndex map[int]string, imageColumns map[int]int) error {
+	selectedCols := sortedHeaderColumns(headerIndex)
+	for i := len(selectedCols) - 1; i >= 0; i-- {
+		colIdx := selectedCols[i]
+		insertBeforeCol, err := excelize.ColumnNumberToName(colIdx + 2)
+		if err != nil {
+			return err
+		}
+		if err := f.InsertCols(sheet, insertBeforeCol, 1); err != nil {
+			return fmt.Errorf("insert image column: %w", err)
+		}
+	}
+
+	for originalColIdx, imageColIdx := range imageColumns {
+		headerCell, err := excelize.CoordinatesToCellName(imageColIdx+1, 1)
+		if err != nil {
+			return err
+		}
+		if err := f.SetCellValue(sheet, headerCell, headerIndex[originalColIdx]+"_图片"); err != nil {
+			return fmt.Errorf("set image column header: %w", err)
+		}
+	}
+	return nil
+}
+
+func sortedHeaderColumns(headerIndex map[int]string) []int {
+	cols := make([]int, 0, len(headerIndex))
+	for colIdx := range headerIndex {
+		cols = append(cols, colIdx)
+	}
+	sort.Ints(cols)
+	return cols
 }
 
 func uniqueOutputPath(path string) string {

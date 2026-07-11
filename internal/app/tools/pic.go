@@ -17,8 +17,8 @@ func SetCellPicture(f *excelize.File, sheet, cell, col string, row int, imageDat
 	}
 
 	var (
-		cellWidthChars   = 8.0  // Excel列宽（字符）
-		cellHeightPoints = 60.0 // Excel行高（磅）
+		cellWidthChars   = 10.0 // Excel列宽（字符）
+		cellHeightPoints = 72.0 // Excel行高（磅）
 	)
 
 	processedImage, err := processImageForExcel(imageData)
@@ -50,7 +50,7 @@ func SetCellPicture(f *excelize.File, sheet, cell, col string, row int, imageDat
 func processImageForExcel(imageData []byte) ([]byte, error) {
 
 	var (
-		targetWidthInches = 1.0 // 目标宽度
+		targetWidthInches = 1.2 // 目标宽度
 		DPI               = 300 // 标准显示DPI
 	)
 
@@ -70,7 +70,7 @@ func processImageForExcel(imageData []byte) ([]byte, error) {
 	srcHeight := bounds.Dy()
 
 	// 计算目标宽度
-	targetWidthPixels := int(targetWidthInches * float64(DPI)) // 63像素
+	targetWidthPixels := int(targetWidthInches * float64(DPI))
 	// 计算目标高度（保持宽高比）
 	targetHeight := int(float64(srcHeight) * float64(targetWidthPixels) / float64(srcWidth))
 

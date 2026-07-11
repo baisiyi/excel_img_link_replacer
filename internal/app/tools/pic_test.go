@@ -24,6 +24,13 @@ func TestProcessImageForExcelNormalizesPNGAndJPEG(t *testing.T) {
 			if !IsPNGMagicNumber(out) {
 				t.Fatal("processed image should be png")
 			}
+			img, _, err := image.Decode(bytes.NewReader(out))
+			if err != nil {
+				t.Fatalf("decode processed image: %v", err)
+			}
+			if got := img.Bounds().Dx(); got != 360 {
+				t.Fatalf("processed image width = %d, want 360", got)
+			}
 		})
 	}
 }
